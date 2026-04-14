@@ -4,126 +4,140 @@ from fredapi import Fred
 import pandas as pd
 import plotly.graph_objects as go
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Private Credit Bubble Tracker", layout="wide")
-FRED_API_KEY = 'd513e8c5050452fc2c895cb81aec41ee' # Replace with your key
-fred = Fred(api_key=FRED_API_KEY)
+# --- 1. CONFIGURATION & SECRETS ---
+st.set_page_config(page_title="Private Credit Bubble Monitor", layout="wide")
 
-# Conversion Rates (April 2026)
-USD_TO_PHP = 59
-USD_TO_INR = 93
-
-# Tickers
+# PASTE YOUR FRED API KEY HERE
+FRED_API_KEY = "d513e8c5050452fc2c895cb81aec41ee" 
 XLF_TICKER = 'XLF'
-PC_MANAGERS = ['ARES', 'APO', 'BX']
 
-# --- DATA FETCHING ---
+# --- 2. DATA FETCHING FUNCTION ---
 @st.cache_data(ttl=3600)
-def get_data():
-    # Step 1: XLF Data
-    xlf = yf.download(XLF_TICKER, period='1y')
+def get_all_market_data(tickers):
+    # Fetch 2y to ensure the 200-day MA is fully populated
+    all_tickers = [XLF_TICKER] + tickers + ['USDPHP=X', 'USDINR=X']
+    data = yf.download(all_tickers, period='2y') 
     
-    # Step 2: Credit Spread (FRED)
-    spread = fred.get_series('BAMLH0A0HYM2')
-    
-    # Step 3: PC Managers Equity
-    pc_equity = yf.download(PC_MANAGERS, period='1y')['Close']
-    
-    return xlf, spread, pc_equity
+    spread = None
+    try:
+        fred = Fred(api_key=FRED_API_KEY)
+        # ICE BofA High Yield Index Option-Adjusted Spread
+        spread = fred.get_series('BAMLH0A0HYM2').dropna()
+    except Exception as e:
+        st.error(f"FRED API Error: {e}")
+            
+    return data, spread
 
-# --- UI LAYOUT ---
+# --- 3. MAIN DASHBOARD ---
 st.title("🚨 Private Credit Bubble & FINDX Monitor")
-st.markdown(f"**Date:** April 14, 2026 | **Location:** Pasay City, PH")
-st.divider()
+st.markdown(f"**Date:** April 15, 2026 | **Location:** Pasay City, PH")
+
+# Sidebar Configuration
+st.sidebar.header("⚙️ Settings")
+default_pc = ['ARES', 'APO', 'BX']
+user_tickers = st.sidebar.multiselect("Track Managers", options=['ARES', 'APO', 'BX', 'KKR', 'OWL', 'CG'], default=default_pc)
 
 try:
-    xlf_df, spread_series, pc_df = get_data()
+    market_df, spread_series = get_all_market_data(user_tickers)
 
-    # --- ROBUST DATA SELECTION ---
-    # yfinance sometimes returns a MultiIndex. This ensures we get the single 'Close' column.
-    if isinstance(xlf_df.columns, pd.MultiIndex):
-        xlf_close_series = xlf_df['Close'][XLF_TICKER]
+    # A. EXTRACT LIVE FX RATES
+    usd_php = float(market_df['Close']['USDPHP=X'].dropna().iloc[-1])
+    usd_inr = float(market_df['Close']['USDINR=X'].dropna().iloc[-1])
+
+    # B. XLF LOGIC
+    xlf_close = market_df['Close'][XLF_TICKER].dropna()
+    ma200 = xlf_close.rolling(window=200).mean()
+    curr_xlf = float(xlf_close.iloc[-1])
+    curr_ma200 = float(ma200.iloc[-1])
+    
+    # Calculate XLF Delta %
+    xlf_delta = ((curr_xlf / xlf_close.iloc[-6]) - 1) * 100 if len(xlf_close) > 6 else 0.0
+    xlf_trigger = curr_xlf < curr_ma200
+
+    # C. FINDX STRESS LOGIC (Drawdown %)
+    pc_close = market_df['Close'][user_tickers].ffill().dropna()
+    if len(pc_close) > 6:
+        # Calculate drawdown from the start of the 2y period
+        norm_prices = pc_close / pc_close.iloc[0]
+        stress_val = (1 - norm_prices.mean(axis=1).iloc[-1]) * 100
+        prev_week_stress = (1 - norm_prices.mean(axis=1).iloc[-6]) * 100
     else:
-        xlf_close_series = xlf_df['Close']
-
-    # --- CALCULATIONS ---
-    # Step 1: XLF MA Analysis
-    ma200_series = xlf_close_series.rolling(window=200).mean()
+        stress_val = 0.0
+        prev_week_stress = 0.0
     
-    # We use .item() to ensure we are comparing single float values, not Series
-    current_xlf = float(xlf_close_series.iloc[-1])
-    ma200_xlf = float(ma200_series.iloc[-1])
+    stress_trigger = (stress_val - prev_week_stress) > 10.0
+
+    # D. SPREAD LOGIC (Converting % to bps)
+    spread_trigger = False
+    curr_spread_bps = 0.0
+    spread_delta = 0.0
+    if spread_series is not None and not spread_series.empty:
+        # FRED returns 2.95 for 2.95%, which is 295 bps
+        curr_spread_bps = float(spread_series.iloc[-1]) * 100
+        prev_spread_bps = float(spread_series.iloc[-6]) * 100
+        spread_delta = curr_spread_bps - prev_spread_bps
+        spread_trigger = curr_spread_bps > 450.0 or (curr_spread_bps / prev_spread_bps > 1.20)
+
+    # --- 4. TOP METRICS ---
+    m1, m2, m3 = st.columns(3)
     
-    xlf_status = "CRACKED" if current_xlf < ma200_xlf else "INTACT"
-
-    # Step 2: Spread Analysis (FRED data is usually a simple Series)
-    current_spread = float(spread_series.iloc[-1])
-    prev_5d_spread = float(spread_series.iloc[-6])
-    spread_change = ((current_spread - prev_5d_spread) / prev_5d_spread) * 100
-    spread_status = "SPIKING" if spread_change >= 20 else "STABLE"
-
-    # --- TOP METRICS ---
-    col1, col2, col3 = st.columns(3)
+    m1.metric("Financials (XLF)", f"${curr_xlf:.2f}", f"{xlf_delta:+.2f}%", delta_color="inverse")
+    m1.caption(f"200D MA: **${curr_ma200:.2f}**")
     
-    with col1:
-        # Use inverse delta if price is below MA (Red is bad for the sector, good for our short)
-        st.metric("XLF vs 200-Day MA", f"${current_xlf:.2f}", 
-                  f"{((current_xlf/ma200_xlf)-1)*100:.2f}%", delta_color="inverse")
-        st.caption(f"Status: **Trend {xlf_status}**")
+    m2.metric("Credit Spread", f"{curr_spread_bps:.0f} bps", f"{spread_delta:+.0f} bps", delta_color="inverse")
+    m2.caption("Target: < 450 bps")
+    
+    m3.metric("FINDX Stress %", f"{stress_val:.2f}%", f"{stress_val - prev_week_stress:+.2f}%", delta_color="inverse")
+    m3.caption("Weekly Δ Target: < 10%")
 
-    with col2:
-        st.metric("FRED HY Spread", f"{current_spread:.2f} bps", f"{spread_change:+.2f}%", delta_color="inverse")
-        st.caption(f"Status: **Credit {spread_status}**")
-
-    with col3:
-        # Handling MultiIndex for Private Credit Managers too
-        if isinstance(pc_df.columns, pd.MultiIndex):
-            pc_close = pc_df['Close']
-        else:
-            pc_close = pc_df
-            
-        avg_pc_change = pc_close.pct_change(periods=5).iloc[-1].mean() * 100
-        st.metric("PC Manager Equity (5D)", "Avg Stress", f"{avg_pc_change:+.2f}%", delta_color="inverse")
-        st.caption("Ares, Apollo, Blackstone")
-
-    # --- STRATEGY ACTION BOX ---
+    # --- 5. ACTION BANNER ---
     st.divider()
-    if xlf_status == "CRACKED" and spread_status == "SPIKING":
-        st.error("### ⚠️ ACTION: SELL/SHORT SIGNAL TRIGGERED")
-        st.write("Both technical and credit signals confirm the bubble is deflating. Consider entry into **SEF**.")
-    elif xlf_status == "CRACKED" or spread_status == "SPIKING":
-        st.warning("### ⚠️ WARNING: SYSTEM STRESS DETECTED")
-        st.write("One of two major triggers has fired. Prepare 'Dry Powder' (Cash/SGOV).")
+    active_triggers = sum([xlf_trigger, spread_trigger, stress_trigger])
+    
+    if active_triggers >= 2:
+        st.error(f"### ⚡ SYSTEMIC SHORT SIGNAL: {active_triggers}/3 Triggers Fired")
+    elif active_triggers == 1:
+        st.warning("### ⚠️ WARNING: STRUCTURAL STRESS DETECTED")
     else:
         st.success("### ✅ STATUS: BUBBLE INTACT")
-        st.write("Market remains above key support levels. Monitoring FINDX for movement.")
 
-# --- VISUALIZATIONS ---
+    # Legend
+    with st.expander("📚 View Trigger Legend & Logic"):
+        st.markdown("""
+        | Trigger | Logic | Critical Threshold |
+        | :--- | :--- | :--- |
+        | **Trend Pivot** | XLF Price < 200-Day MA | Confirms the long-term trend reversal. |
+        | **Credit Panic** | Spread > 450bps or +20%/week | Institutional rush for default insurance. |
+        | **Liquidity Crack** | Stress Index +10% in a week | Major sell-off in Private Credit Managers. |
+        """)
+
+    # --- 6. CHARTS ---
     c1, c2 = st.columns(2)
-
     with c1:
         st.subheader("XLF Trend Analysis")
         fig = go.Figure()
-        
-        # We use the xlf_close_series and ma200_series variables we defined earlier
-        fig.add_trace(go.Scatter(x=xlf_close_series.index, y=xlf_close_series, name='XLF Price'))
-        fig.add_trace(go.Scatter(x=ma200_series.index, y=ma200_series, name='200D MA', line=dict(dash='dash')))
-        
-        fig.update_layout(template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20))
+        fig.add_trace(go.Scatter(x=xlf_close.index, y=xlf_close, name='Price'))
+        fig.add_trace(go.Scatter(x=ma200.index, y=ma200, name='200D MA', line=dict(dash='dash')))
+        fig.update_layout(template="plotly_dark", margin=dict(l=20,r=20,t=20,b=20))
         st.plotly_chart(fig, use_container_width=True)
-
-    with c2:
-        st.subheader("Credit Spread (Fear Gauge)")
-        # FRED data is a simple series, so this remains direct
-        st.line_chart(spread_series.tail(90))
-        st.caption("Trailing 90 days of ICE BofA High Yield Spread")
         
-        # --- CURRENCY TOOL (In Sidebar) ---
-    st.sidebar.header("Currency Converter")
-    usd_val = st.sidebar.number_input("Enter USD Amount", value=current_xlf)
-    st.sidebar.write(f"**PHP:** ₱{usd_val * USD_TO_PHP:,.2f}")
-    st.sidebar.write(f"**INR:** ₹{usd_val * USD_TO_INR:,.2f}")
+    with c2:
+        st.subheader("Credit Fear (Trailing 90D)")
+        if spread_series is not None:
+            # Re-scale for the chart display
+            st.line_chart(spread_series.tail(90) * 100)
+        else:
+            st.info("Check FRED API Key.")
+
+    # --- 7. LIVE CURRENCY TOOL ---
+    st.sidebar.divider()
+    st.sidebar.subheader("💱 Live Currency Tool")
+    st.sidebar.caption(f"Rates: **PHP {usd_php:.2f}** | **INR {usd_inr:.2f}**")
+    
+    amount = st.sidebar.number_input("Enter USD Amount", value=100.0)
+    col_a, col_b = st.sidebar.columns(2)
+    col_a.info(f"₱{amount * usd_php:,.2f}")
+    col_b.info(f"₹{amount * usd_inr:,.2f}")
 
 except Exception as e:
-    st.error(f"Dashboard Error: {e}")
-    st.info("Check your FRED API key or internet connection.")
+    st.error(f"Dashboard Update Error: {e}")
