@@ -4,45 +4,38 @@ from fredapi import Fred
 import pandas as pd
 import plotly.graph_objects as go
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION & SECRETS ---
 st.set_page_config(page_title="Private Credit Bubble Monitor", layout="wide")
 
+# This pulls the key safely from Streamlit's settings instead of the file
+FRED_API_KEY = st.secrets["FRED_API_KEY"] 
 XLF_TICKER = 'XLF'
 
-# --- 2. SIDEBAR INPUTS ---
-st.sidebar.header("⚙️ Settings")
-
-# Key input moves here. It remains blank until the user types it in.
-user_fred_key = st.sidebar.text_input(
-    "Enter FRED API Key", 
-    type="password", 
-    help="Get a free key at fred.stlouisfed.org"
-)
-
-default_pc = ['ARES', 'APO', 'BX']
-user_tickers = st.sidebar.multiselect("Track Managers", options=['ARES', 'APO', 'BX', 'KKR', 'OWL', 'CG'], default=default_pc)
-
-# --- 3. DATA FETCHING FUNCTION ---
+# --- 2. DATA FETCHING FUNCTION ---
 @st.cache_data(ttl=3600)
-def get_all_market_data(tickers, api_key):
+def get_all_market_data(tickers):
+    # Fetch 2y to ensure the 200-day MA is fully populated
     all_tickers = [XLF_TICKER] + tickers + ['USDPHP=X', 'USDINR=X']
     data = yf.download(all_tickers, period='2y') 
     
     spread = None
-    if api_key: # Only attempts to fetch if a key is provided
-        try:
-            fred = Fred(api_key=api_key)
-            spread = fred.get_series('BAMLH0A0HYM2').dropna()
-        except Exception as e:
-            st.error(f"FRED API Error: {e}")
+    try:
+        fred = Fred(api_key=FRED_API_KEY)
+        # ICE BofA High Yield Index Option-Adjusted Spread
+        spread = fred.get_series('BAMLH0A0HYM2').dropna()
+    except Exception as e:
+        st.error(f"FRED API Error: {e}")
             
     return data, spread
 
-# --- 4. MAIN DASHBOARD LOGIC ---
+# --- 3. MAIN DASHBOARD ---
 st.title("🚨 Private Credit Bubble & FINDX Monitor")
+st.markdown(f"**Date:** April 15, 2026 | **Location:** Pasay City, PH")
 
-if not user_fred_key:
-    st.info("👈 Enter your FRED API Key in the sidebar to activate the Credit Fear Gauge.")
+# Sidebar Configuration
+st.sidebar.header("⚙️ Settings")
+default_pc = ['ARES', 'APO', 'BX']
+user_tickers = st.sidebar.multiselect("Track Managers", options=['ARES', 'APO', 'BX', 'KKR', 'OWL', 'CG'], default=default_pc)
 
 try:
     market_df, spread_series = get_all_market_data(user_tickers)
