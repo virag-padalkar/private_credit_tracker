@@ -7,8 +7,8 @@ import plotly.graph_objects as go
 # --- 1. CONFIGURATION & SECRETS ---
 st.set_page_config(page_title="Private Credit Bubble Monitor", layout="wide")
 
-# PASTE YOUR FRED API KEY HERE
-FRED_API_KEY = "d513e8c5050452fc2c895cb81aec41ee" 
+# This pulls the key safely from Streamlit's settings instead of the file
+FRED_API_KEY = st.secrets["FRED_API_KEY"] 
 XLF_TICKER = 'XLF'
 
 # --- 2. DATA FETCHING FUNCTION ---
