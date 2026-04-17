@@ -107,8 +107,8 @@ try:
         | Trigger | Logic | Critical Threshold |
         | :--- | :--- | :--- |
         | **Trend Pivot** | XLF Price < 200-Day MA | Confirms the long-term trend reversal. |
-        | **Credit Panic** | Spread > 450bps or +20%/week | Institutional rush for default insurance. |
-        | **Liquidity Crack** | Stress Index +10% in a week | Major sell-off in Private Credit Managers. |
+        | **Credit Panic** | Spread > 450bps or +20%/week | Institutional rush for default insurance. Raise cash. |
+        | **Liquidity Crack** | Stress Index +10% in a week | Major sell-off in Private Credit Managers. Purchase SEF. |
         """)
 
     # --- 6. CHARTS ---
