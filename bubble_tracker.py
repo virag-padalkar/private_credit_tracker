@@ -49,25 +49,21 @@ try:
     
     if market_df is not None:
         # --- A. CALCULATIONS ---
-        # 1. FX
         usd_php = float(market_df['USDPHP=X'].iloc[-1])
         usd_inr = float(market_df['USDINR=X'].iloc[-1])
         
-        # 2. XLF Trigger Logic
         xlf_close = market_df[XLF_TICKER].dropna()
         ma200 = xlf_close.rolling(window=200).mean()
         curr_xlf = float(xlf_close.iloc[-1])
         curr_ma200 = float(ma200.iloc[-1])
         xlf_trigger = curr_xlf < curr_ma200
         
-        # 3. Spread Trigger Logic
         spread_trigger = False
         curr_spread_bps = 0.0
         if spread_series is not None and not spread_series.empty:
             curr_spread_bps = float(spread_series.iloc[-1]) * 100
             spread_trigger = curr_spread_bps > 450.0
 
-        # 4. Stress Trigger Logic
         pc_close = market_df[user_tickers].ffill().dropna()
         stress_val, stress_delta = 0.0, 0.0
         stress_trigger = False
@@ -90,31 +86,63 @@ try:
         m3.metric("FINDX Stress %", f"{stress_val:.2f}%", f"{stress_delta:+.2f}%", delta_color="inverse")
         m3.caption("Weekly Δ Target: < 10%")
 
-        # --- C. STATUS UPDATE (ACTIVE TRIGGERS) ---
+        # --- C. STATUS UPDATE ---
         st.divider()
         active_triggers = sum([xlf_trigger, spread_trigger, stress_trigger])
         
         if active_triggers >= 2:
             st.error(f"### 🔥 SYSTEMIC SHORT SIGNAL ({active_triggers}/3 Triggers Active)")
-            st.markdown("**Action Required:** High probability of a liquidity vacuum. Protect Indian equity exposure; consider SEF position.")
         elif active_triggers == 1:
             st.warning(f"### ⚠️ WARNING: STRUCTURAL STRESS DETECTED ({active_triggers}/3 Triggers Active)")
-            st.markdown("**Action Required:** Monitor XLF support levels. Credit floor is weakening.")
         else:
             st.success(f"### ✅ STATUS: BUBBLE INTACT ({active_triggers}/3 Triggers Active)")
-            st.markdown("**Action Required:** No immediate bubble-burst indicators. Maintain standard long positions.")
 
         # --- D. ACTION MATRIX ---
         with st.expander("📚 Institutional Action Matrix & Trigger Legend", expanded=False):
             st.markdown("""
-            | Active Triggers | Market Regime | Portfolio Action |
-            | :---: | :--- | :--- |
-            | **0** | ✅ **Expansion** | Risk-on. Leverage is safe. |
-            | **1** | ⚠️ **Warning** | Tighten stops. Monitor manager outflows. |
-            | **2** | ⚡ **Unwind** | **Short Signal.** Raise cash; Buy SEF. |
-            | **3** | 🔥 **Collapse** | Liquidation event. Full defensive posture. |
+| Active Triggers | Market Regime | Portfolio Action |
+| :---: | :--- | :--- |
+| **0** | ✅ **Expansion** | Risk-on. Leverage is safe. |
+| **1** | ⚠️ **Warning** | Tighten stops. Monitor manager outflows. |
+| **2** | ⚡ **Unwind** | **Short Signal.** Raise cash; Buy SEF. |
+| **3** | 🔥 **Collapse** | Liquidation event. Full defensive posture. |
 
-            **Trigger Definitions:**
-            1. **XLF < 200D MA:** Price momentum has shifted from long-term accumulation to distribution.
-            2. **Spread > 450bps:** Lenders are demanding higher premiums for risk, signaling a credit freeze.
-            3
+**Trigger Definitions:**
+1. **XLF < 200D MA:** Trend reversal from accumulation to distribution.
+2. **Spread > 450bps:** Lenders demanding high premiums; credit freeze risk.
+3. **Stress Δ > 10%:** Sharp sell-off in Private Credit managers (FINDX).
+            """)
+
+        # --- E. CHARTS ---
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("XLF Trend Analysis")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=xlf_close.index, y=xlf_close, name='Price', line=dict(color='#00d4ff')))
+            fig.add_trace(go.Scatter(x=ma200.index, y=ma200, name='200D MA', line=dict(dash='dash', color='red')))
+            fig.update_layout(template="plotly_dark", height=400, margin=dict(l=10,r=10,t=10,b=10))
+            st.plotly_chart(fig, width="stretch")
+            
+        with c2:
+            st.subheader("Credit Fear (Trailing 90D)")
+            if spread_series is not None:
+                fig_spread = go.Figure(go.Scatter(x=spread_series.tail(90).index, y=spread_series.tail(90)*100, line=dict(color='#ff4b4b')))
+                fig_spread.update_layout(template="plotly_dark", height=400, margin=dict(l=10,r=10,t=10,b=10))
+                st.plotly_chart(fig_spread, width="stretch")
+
+        # --- F. HEDGE PERFORMANCE ---
+        st.divider()
+        st.subheader("🛡️ Hedge Execution: Short Financials (SEF)")
+        hedge_df = market_df['SEF'].ffill()
+        fig_sef = go.Figure(go.Scatter(x=hedge_df.index, y=hedge_df, name="SEF Price", line=dict(color='#ffcc00')))
+        fig_sef.update_layout(template="plotly_dark", height=350, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_sef, width="stretch")
+
+        # --- G. CURRENCY TOOL ---
+        st.sidebar.divider()
+        st.sidebar.caption(f"PHP: {usd_php:.2f} | INR: {usd_inr:.2f}")
+        amount = st.sidebar.number_input("Enter USD", value=100.0)
+        st.sidebar.info(f"₱{amount * usd_php:,.2f} | ₹{amount * usd_inr:,.2f}")
+
+except Exception as e:
+    st.error(f"Logic Processing Error: {e}")
