@@ -56,21 +56,27 @@ try:
         curr_xlf = float(xlf_close.iloc[-1])
         curr_ma200 = float(ma200.iloc[-1])
         
-        # B. METRICS
+	# B. METRICS
         m1, m2, m3 = st.columns(3)
+        
+        # Metric 1: XLF
         m1.metric("Financials (XLF)", f"${curr_xlf:.2f}", f"{((curr_xlf/xlf_close.iloc[-6])-1)*100:+.2f}%")
         
+        # Metric 2: Credit Spread (from FRED)
         if spread_series is not None:
             curr_spread = float(spread_series.iloc[-1]) * 100
             m2.metric("Credit Spread", f"{curr_spread:.0f} bps")
         
-        # C. ACTION BANNER
-        st.divider()
-        if curr_xlf < curr_ma200:
-            st.warning("### ⚠️ WARNING: STRUCTURAL STRESS DETECTED")
-        else:
-            st.success("### ✅ STATUS: BUBBLE INTACT")
-
+        # Metric 3: FINDX Stress %
+        pc_close = market_df[user_tickers].ffill().dropna()
+        if not pc_close.empty:
+            norm_prices = pc_close / pc_close.iloc[0]
+            stress_val = (1 - norm_prices.mean(axis=1).iloc[-1]) * 100
+            prev_week_stress = (1 - norm_prices.mean(axis=1).iloc[-6]) * 100 if len(norm_prices) > 6 else stress_val
+            
+            m3.metric("FINDX Stress %", f"{stress_val:.2f}%", f"{stress_val - prev_week_stress:+.2f}%", delta_color="inverse")
+            m3.caption("Weekly Δ Target: < 10%")
+            
         # --- 4. CHARTS (FIXED WIDTH) ---
         c1, c2 = st.columns(2)
         with c1:
