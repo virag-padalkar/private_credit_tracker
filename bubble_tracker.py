@@ -141,3 +141,30 @@ try:
 
 except Exception as e:
     st.error(f"Dashboard Update Error: {e}")
+    
+    
+# --- NEW SECTION: HEDGE PERFORMANCE (SEF) ---
+    st.divider()
+    st.subheader("🛡️ Hedge Execution: Short Financials (SEF)")
+    
+    # Ensure SEF is in your yf.download list at the top of the script!
+    # Updated tickers list in your fetch function: [XLF_TICKER, 'SEF'] + user_tickers
+    
+    hedge_df = market_df['Close']['SEF'].ffill()
+    
+    fig_sef = go.Figure()
+    fig_sef.add_trace(go.Scatter(
+        x=hedge_df.index, 
+        y=hedge_df, 
+        name="SEF Price", 
+        line=dict(color='#ffcc00', width=2)
+    ))
+    
+    fig_sef.update_layout(
+        template="plotly_dark", 
+        height=350,
+        margin=dict(l=10, r=10, t=10, b=10),
+        title="SEF: Appreciates when Financials Crash"
+    )
+    st.plotly_chart(fig_sef, use_container_width=True)
+    st.info("💡 **Strategy:** If XLF breaks its 200D MA, look for SEF to break upward.")
